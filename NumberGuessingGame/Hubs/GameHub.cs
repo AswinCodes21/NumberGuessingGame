@@ -71,6 +71,8 @@ namespace NumberGuessingGame.Hubs
         }
 
 
+
+
         public async Task CreateRoom(string roomCode)
         {
             if (string.IsNullOrWhiteSpace(roomCode))
@@ -103,18 +105,68 @@ namespace NumberGuessingGame.Hubs
             if (!GameRoomStore.Rooms.TryGetValue(roomCode, out var room))
                 throw new HubException("Room not found");
 
-            if (room.Player2 != null)
+            bool joined = false;
+
+            // Host reconnect
+            if (room.Player1 != null &&
+                room.Player1.ConnectionId != Context.ConnectionId &&
+                room.Player2 != null)
+            {
+                room.Player1.ConnectionId = Context.ConnectionId;
+                await Groups.AddToGroupAsync(Context.ConnectionId, roomCode);
+                joined = true;
+            }
+            //  Guest reconnect
+            else if (room.Player2 != null &&
+                     room.Player2.ConnectionId != Context.ConnectionId)
+            {
+                room.Player2.ConnectionId = Context.ConnectionId;
+                await Groups.AddToGroupAsync(Context.ConnectionId, roomCode);
+                joined = true;
+            }
+            //  New guest joining
+            else if (room.Player2 == null)
+            {
+                room.Player2 = new Player
+                {
+                    ConnectionId = Context.ConnectionId,
+                    Role = "PLAYER2"
+                };
+
+                await Groups.AddToGroupAsync(Context.ConnectionId, roomCode);
+
+                // Notify host
+                await Clients.OthersInGroup(roomCode)
+                    .SendAsync("OpponentJoined");
+
+                joined = true;
+            }
+
+            if (!joined)
                 throw new HubException("Room is already full");
 
-            room.Player2 = new Player
-            {
-                ConnectionId = Context.ConnectionId,
-                Role = "PLAYER2"
-            };
+            // ALWAYS send game state after join/rejoin
+            var isPlayer1 = room.Player1?.ConnectionId == Context.ConnectionId;
 
-            await Groups.AddToGroupAsync(Context.ConnectionId, roomCode);
-            await Clients.Group(roomCode).SendAsync("OpponentJoined");
+            await Clients.Caller.SendAsync("GameState", new GameStateDto
+            {
+                DigitCount = room.DigitCount,
+                CurrentTurn = room.CurrentTurn,
+                IsGameStarted =
+                    !string.IsNullOrEmpty(room.Player1?.SecretNumber) &&
+                    !string.IsNullOrEmpty(room.Player2?.SecretNumber),
+                IsGameOver = room.IsGameOver,
+
+                YourGuesses = isPlayer1
+                    ? room.Player1Guesses
+                    : room.Player2Guesses,
+
+                OpponentGuesses = isPlayer1
+                    ? room.Player2Guesses
+                    : room.Player1Guesses
+            });
         }
+
 
 
         public async Task SubmitSecret(string roomCode, string secret)
