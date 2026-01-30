@@ -6,7 +6,28 @@ using System.Collections.Concurrent;
 namespace NumberGuessingGame.Hubs
 {
     public class GameHub : Hub
+
     {
+
+        public async Task SetDifficulty(string roomCode, int digitCount)
+        {
+            if (!GameRoomStore.Rooms.TryGetValue(roomCode, out var room))
+                throw new HubException("Room not found");
+
+            // Only HOST (PLAYER1) can set difficulty
+            if (room.Player1.ConnectionId != Context.ConnectionId)
+                throw new HubException("Only host can set difficulty");
+
+            if (digitCount != 3 && digitCount != 4)
+                throw new HubException("Invalid digit count");
+
+            room.DigitCount = digitCount;
+
+            // Notify ONLY the guest
+            await Clients.OthersInGroup(roomCode)
+                .SendAsync("DifficultySet", digitCount);
+        }
+
         public async Task SendChatMessage(string roomCode, string message)
         {
             var chatMessage = new ChatMessageDto
@@ -20,19 +41,22 @@ namespace NumberGuessingGame.Hubs
                 .SendAsync("ReceiveChatMessage", chatMessage);
         }
 
- 
-        public async Task SendVoiceMessage(string roomCode, byte[] audioData)
-        {
-            var chatMessage = new ChatMessageDto
-            {
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                Type = "voice",
-                AudioData = audioData
-            };
 
+        public async Task SendVoiceMessage(
+    string roomCode,
+    string sender,
+    string base64Audio
+)
+        {
             await Clients.OthersInGroup(roomCode)
-                .SendAsync("ReceiveVoiceMessage", chatMessage);
+                .SendAsync("VoiceMessage", new
+                {
+                    sender = sender,          // "HOST" or "GUEST"
+                    audioData = base64Audio,  // 그대로 forward
+                    mimeType = "audio/webm"
+                });
         }
+
 
         public override async Task OnConnectedAsync()
         {
@@ -45,6 +69,8 @@ namespace NumberGuessingGame.Hubs
             Console.WriteLine($"Disconnected: {Context.ConnectionId}");
             await base.OnDisconnectedAsync(exception);
         }
+
+
 
 
         public async Task CreateRoom(string roomCode)
@@ -79,18 +105,68 @@ namespace NumberGuessingGame.Hubs
             if (!GameRoomStore.Rooms.TryGetValue(roomCode, out var room))
                 throw new HubException("Room not found");
 
-            if (room.Player2 != null)
+            bool joined = false;
+
+            // Host reconnect
+            if (room.Player1 != null &&
+                room.Player1.ConnectionId != Context.ConnectionId &&
+                room.Player2 != null)
+            {
+                room.Player1.ConnectionId = Context.ConnectionId;
+                await Groups.AddToGroupAsync(Context.ConnectionId, roomCode);
+                joined = true;
+            }
+            //  Guest reconnect
+            else if (room.Player2 != null &&
+                     room.Player2.ConnectionId != Context.ConnectionId)
+            {
+                room.Player2.ConnectionId = Context.ConnectionId;
+                await Groups.AddToGroupAsync(Context.ConnectionId, roomCode);
+                joined = true;
+            }
+            //  New guest joining
+            else if (room.Player2 == null)
+            {
+                room.Player2 = new Player
+                {
+                    ConnectionId = Context.ConnectionId,
+                    Role = "PLAYER2"
+                };
+
+                await Groups.AddToGroupAsync(Context.ConnectionId, roomCode);
+
+                // Notify host
+                await Clients.OthersInGroup(roomCode)
+                    .SendAsync("OpponentJoined");
+
+                joined = true;
+            }
+
+            if (!joined)
                 throw new HubException("Room is already full");
 
-            room.Player2 = new Player
-            {
-                ConnectionId = Context.ConnectionId,
-                Role = "PLAYER2"
-            };
+            // ALWAYS send game state after join/rejoin
+            var isPlayer1 = room.Player1?.ConnectionId == Context.ConnectionId;
 
-            await Groups.AddToGroupAsync(Context.ConnectionId, roomCode);
-            await Clients.Group(roomCode).SendAsync("OpponentJoined");
+            await Clients.Caller.SendAsync("GameState", new GameStateDto
+            {
+                DigitCount = room.DigitCount,
+                CurrentTurn = room.CurrentTurn,
+                IsGameStarted =
+                    !string.IsNullOrEmpty(room.Player1?.SecretNumber) &&
+                    !string.IsNullOrEmpty(room.Player2?.SecretNumber),
+                IsGameOver = room.IsGameOver,
+
+                YourGuesses = isPlayer1
+                    ? room.Player1Guesses
+                    : room.Player2Guesses,
+
+                OpponentGuesses = isPlayer1
+                    ? room.Player2Guesses
+                    : room.Player1Guesses
+            });
         }
+
 
 
         public async Task SubmitSecret(string roomCode, string secret)
