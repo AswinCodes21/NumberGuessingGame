@@ -6,7 +6,28 @@ using System.Collections.Concurrent;
 namespace NumberGuessingGame.Hubs
 {
     public class GameHub : Hub
+
     {
+
+        public async Task SetDifficulty(string roomCode, int digitCount)
+        {
+            if (!GameRoomStore.Rooms.TryGetValue(roomCode, out var room))
+                throw new HubException("Room not found");
+
+            // Only HOST (PLAYER1) can set difficulty
+            if (room.Player1.ConnectionId != Context.ConnectionId)
+                throw new HubException("Only host can set difficulty");
+
+            if (digitCount != 3 && digitCount != 4)
+                throw new HubException("Invalid digit count");
+
+            room.DigitCount = digitCount;
+
+            // Notify ONLY the guest
+            await Clients.OthersInGroup(roomCode)
+                .SendAsync("DifficultySet", digitCount);
+        }
+
         public async Task SendChatMessage(string roomCode, string message)
         {
             var chatMessage = new ChatMessageDto
@@ -20,19 +41,22 @@ namespace NumberGuessingGame.Hubs
                 .SendAsync("ReceiveChatMessage", chatMessage);
         }
 
- 
-        public async Task SendVoiceMessage(string roomCode, byte[] audioData)
-        {
-            var chatMessage = new ChatMessageDto
-            {
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                Type = "voice",
-                AudioData = audioData
-            };
 
+        public async Task SendVoiceMessage(
+    string roomCode,
+    string sender,
+    string base64Audio
+)
+        {
             await Clients.OthersInGroup(roomCode)
-                .SendAsync("ReceiveVoiceMessage", chatMessage);
+                .SendAsync("VoiceMessage", new
+                {
+                    sender = sender,          // "HOST" or "GUEST"
+                    audioData = base64Audio,  // 그대로 forward
+                    mimeType = "audio/webm"
+                });
         }
+
 
         public override async Task OnConnectedAsync()
         {
