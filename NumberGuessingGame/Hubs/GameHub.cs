@@ -71,6 +71,43 @@ namespace NumberGuessingGame.Hubs
         }
 
 
+        public async Task RestartGame(string roomCode)
+        {
+            if (!GameRoomStore.Rooms.TryGetValue(roomCode, out var room))
+                throw new HubException("Room not found");
+
+            if (room.Player1 == null || room.Player1.ConnectionId != Context.ConnectionId)
+                throw new HubException("Only host can restart the game");
+
+
+            if (room.Player1 == null || room.Player2 == null)
+                throw new HubException("Both players are required to restart");
+
+            // Reset core game state
+            room.IsGameOver = false;
+            room.CurrentTurn = "PLAYER1"; // Host always starts (consistent rule)
+
+            // Clear secrets
+            room.Player1.SecretNumber = null;
+            room.Player2.SecretNumber = null;
+
+            // Clear guesses
+            room.Player1Guesses.Clear();
+            room.Player2Guesses.Clear();
+
+            // Notify BOTH players to reset UI and go back to secret submission
+            await Clients.Group(roomCode)
+                .SendAsync("GameRestarted", new GameStateDto
+                {
+                    DigitCount = room.DigitCount,
+                    CurrentTurn = room.CurrentTurn,
+                    IsGameStarted = false,
+                    IsGameOver = false,
+
+                    YourGuesses = new List<GuessResult>(),
+                    OpponentGuesses = new List<GuessResult>()
+                });
+        }
 
 
         public async Task CreateRoom(string roomCode)
@@ -152,19 +189,19 @@ namespace NumberGuessingGame.Hubs
             {
                 DigitCount = room.DigitCount,
                 CurrentTurn = room.CurrentTurn,
-                IsGameStarted =
-                    !string.IsNullOrEmpty(room.Player1?.SecretNumber) &&
-                    !string.IsNullOrEmpty(room.Player2?.SecretNumber),
+
+                IsGameStarted = !string.IsNullOrEmpty(room.Player1?.SecretNumber) && !string.IsNullOrEmpty(room.Player2?.SecretNumber),
+
                 IsGameOver = room.IsGameOver,
 
-                YourGuesses = isPlayer1
-                    ? room.Player1Guesses
-                    : room.Player2Guesses,
+                YourSecret = room.IsGameOver ? (isPlayer1 ? room.Player1.SecretNumber : room.Player2.SecretNumber) : null, 
+                OpponentSecret = room.IsGameOver ? (isPlayer1 ? room.Player2.SecretNumber : room.Player1.SecretNumber): null,
 
-                OpponentGuesses = isPlayer1
-                    ? room.Player2Guesses
-                    : room.Player1Guesses
+                YourGuesses = isPlayer1 ? room.Player1Guesses : room.Player2Guesses,
+
+                OpponentGuesses = isPlayer1 ? room.Player2Guesses : room.Player1Guesses
             });
+
         }
 
 
@@ -204,6 +241,7 @@ namespace NumberGuessingGame.Hubs
 
         public async Task MakeGuess(string roomCode, string guess)
         {
+
             if (!GameRoomStore.Rooms.TryGetValue(roomCode, out var room))
                 throw new HubException("Room not found");
 
