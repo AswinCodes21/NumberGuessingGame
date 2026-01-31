@@ -210,8 +210,8 @@ namespace NumberGuessingGame.Hubs
             if (room.IsGameOver)
                 return;
 
-            var isPlayer1 = room.Player1.ConnectionId == Context.ConnectionId;
-            var currentPlayer = isPlayer1 ? "PLAYER1" : "PLAYER2";
+            bool isPlayer1 = room.Player1.ConnectionId == Context.ConnectionId;
+            string currentPlayer = isPlayer1 ? "PLAYER1" : "PLAYER2";
 
             if (room.CurrentTurn != currentPlayer)
                 throw new HubException("Not your turn");
@@ -235,23 +235,58 @@ namespace NumberGuessingGame.Hubs
             else
                 room.Player2Guesses.Add(result);
 
-            await Clients.Group(roomCode).SendAsync(
-                "GuessResult",
-                currentPlayer,
-                result
-            );
+            // Broadcast guess result (safe, no secrets)
+            await Clients.Group(roomCode)
+                .SendAsync("GuessResult", currentPlayer, result);
 
+            //  GAME OVER
             if (bulls == room.DigitCount)
             {
                 room.IsGameOver = true;
-                await Clients.Group(roomCode)
-                    .SendAsync("GameEnded", currentPlayer);
+
+                var player1 = room.Player1;
+                var player2 = room.Player2!;
+
+                // Send personalized GameState to PLAYER1
+                await Clients.Client(player1.ConnectionId)
+                    .SendAsync("GameState", new GameStateDto
+                    {
+                        DigitCount = room.DigitCount,
+                        CurrentTurn = room.CurrentTurn,
+                        IsGameStarted = true,
+                        IsGameOver = true,
+
+                        YourSecret = player1.SecretNumber,
+                        OpponentSecret = player2.SecretNumber,
+
+                        YourGuesses = room.Player1Guesses,
+                        OpponentGuesses = room.Player2Guesses
+                    });
+
+                // Send personalized GameState to PLAYER2
+                await Clients.Client(player2.ConnectionId)
+                    .SendAsync("GameState", new GameStateDto
+                    {
+                        DigitCount = room.DigitCount,
+                        CurrentTurn = room.CurrentTurn,
+                        IsGameStarted = true,
+                        IsGameOver = true,
+
+                        YourSecret = player2.SecretNumber,
+                        OpponentSecret = player1.SecretNumber,
+
+                        YourGuesses = room.Player2Guesses,
+                        OpponentGuesses = room.Player1Guesses
+                    });
+
                 return;
             }
 
+            // Next turn
             room.CurrentTurn = isPlayer1 ? "PLAYER2" : "PLAYER1";
+
             await Clients.Group(roomCode)
                 .SendAsync("TurnChanged", room.CurrentTurn);
         }
     }
-}
+    }
