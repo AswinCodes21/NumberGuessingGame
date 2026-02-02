@@ -8,6 +8,7 @@
         public Player Player1 { get; set; } = null!;
         public Player Player2 { get; set; } = null!;
 
+        public string? Winner { get; set; }
         public string CurrentTurn { get; set; } = "PLAYER1";
         public bool IsGameOver { get; set; } = false;
 
