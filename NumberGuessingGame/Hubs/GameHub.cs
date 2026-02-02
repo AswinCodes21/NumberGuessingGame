@@ -193,6 +193,7 @@ namespace NumberGuessingGame.Hubs
                 IsGameStarted = !string.IsNullOrEmpty(room.Player1?.SecretNumber) && !string.IsNullOrEmpty(room.Player2?.SecretNumber),
 
                 IsGameOver = room.IsGameOver,
+                Winner = room.Winner,
 
                 YourSecret = room.IsGameOver ? (isPlayer1 ? room.Player1.SecretNumber : room.Player2.SecretNumber) : null, 
                 OpponentSecret = room.IsGameOver ? (isPlayer1 ? room.Player2.SecretNumber : room.Player1.SecretNumber): null,
@@ -281,41 +282,44 @@ namespace NumberGuessingGame.Hubs
             if (bulls == room.DigitCount)
             {
                 room.IsGameOver = true;
+                room.Winner = currentPlayer;
 
                 var player1 = room.Player1;
                 var player2 = room.Player2!;
 
                 // Send personalized GameState to PLAYER1
                 await Clients.Client(player1.ConnectionId)
-                    .SendAsync("GameState", new GameStateDto
-                    {
-                        DigitCount = room.DigitCount,
-                        CurrentTurn = room.CurrentTurn,
-                        IsGameStarted = true,
-                        IsGameOver = true,
+                     .SendAsync("GameState", new GameStateDto
+                  {
+                       DigitCount = room.DigitCount,
+                       CurrentTurn = room.CurrentTurn,
+                       IsGameStarted = true,
+                         IsGameOver = true,
+                       Winner = room.Winner,
 
-                        YourSecret = player1.SecretNumber,
-                        OpponentSecret = player2.SecretNumber,
+                      YourSecret = player1.SecretNumber,
+                     OpponentSecret = player2.SecretNumber,
+                     YourGuesses = room.Player1Guesses,
+                    OpponentGuesses = room.Player2Guesses
+    });
 
-                        YourGuesses = room.Player1Guesses,
-                        OpponentGuesses = room.Player2Guesses
-                    });
 
                 // Send personalized GameState to PLAYER2
                 await Clients.Client(player2.ConnectionId)
-                    .SendAsync("GameState", new GameStateDto
-                    {
-                        DigitCount = room.DigitCount,
-                        CurrentTurn = room.CurrentTurn,
-                        IsGameStarted = true,
-                        IsGameOver = true,
+     .SendAsync("GameState", new GameStateDto
+     {
+         DigitCount = room.DigitCount,
+         CurrentTurn = room.CurrentTurn,
+         IsGameStarted = true,
+         IsGameOver = true,
+         Winner = room.Winner,
 
-                        YourSecret = player2.SecretNumber,
-                        OpponentSecret = player1.SecretNumber,
+         YourSecret = player2.SecretNumber,
+         OpponentSecret = player1.SecretNumber,
+         YourGuesses = room.Player2Guesses,
+         OpponentGuesses = room.Player1Guesses
+     });
 
-                        YourGuesses = room.Player2Guesses,
-                        OpponentGuesses = room.Player1Guesses
-                    });
 
                 return;
             }
